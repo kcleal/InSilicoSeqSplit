@@ -6,23 +6,23 @@ from iss.version import __version__
 from setuptools import setup, find_packages
 
 
-url = 'https://github.com/HadrienG/InSilicoSeq'
+url = 'https://github.com/kcleal/InSilicoSeqSplit'
 
 with open('README.md') as f:
     long_description = f.read()
 
 setup(
-    name='InSilicoSeq',
+    name='InSilicoSeqSplit',
     version=__version__,
 
-    description='a sequencing simulator',
+    description='a sequencing simulator, fork of InSilicoSeq',
     long_description=long_description,
     long_description_content_type='text/markdown',
 
     url=url,
     download_url=url + '/tarball/' + __version__,
-    author='Hadrien Gourlé',
-    author_email='hadrien.gourle@slu.se',
+    author='Hadrien Gourlé, Kez Cleal',
+    author_email='hadrien.gourle@slu.se, clealk@cardiff.ac.uk',
 
     license='MIT',
     packages=find_packages(),
@@ -34,6 +34,6 @@ setup(
     include_package_data=True,
 
     entry_points={
-        'console_scripts': ['iss = iss.app:main'],
+        'console_scripts': ['iss-s = iss.app:main'],
     }
 )

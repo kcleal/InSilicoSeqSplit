@@ -11,9 +11,11 @@ from shutil import copyfileobj
 
 import os
 import sys
+from sys import stderr
 import random
 import logging
 import numpy as np
+import itertools
 
 
 def reads(record, ErrorModel, n_pairs, cpu_number, output, seed,
@@ -89,6 +91,10 @@ def reads(record, ErrorModel, n_pairs, cpu_number, output, seed,
     return temp_file_name
 
 
+# split forward read then reverse read in cycle
+FORWARD_SPLIT = itertools.cycle([True, False])
+
+
 def simulate_read(record, ErrorModel, i, cpu_number):
     """From a read pair from one genome (or sequence) according to an
     ErrorModel
@@ -110,58 +116,163 @@ def simulate_read(record, ErrorModel, i, cpu_number):
     header = record.id
 
     read_length = ErrorModel.read_length
-    insert_size = ErrorModel.random_insert_size()
-    # generate the forward read
-    try:  # a ref sequence has to be longer than 2 * read_length + i_size
-        assert read_length < len(record.seq)
-        forward_start = random.randrange(
-            0, len(record.seq) - (2 * read_length + insert_size))
-    except AssertionError as e:
-        raise
-    except ValueError as e:
-        logger.debug(
-            '%s shorter than template length for this ErrorModel:%s'
-            % (record.id, e))
-        forward_start = max(0, random.randrange(
-            0, len(record.seq) - read_length))
-        # raise
+    insert_size = int(np.random.normal(500, 50, 1)) #ErrorModel.random_insert_size()
+    global FORWARD_SPLIT
 
-    forward_end = forward_start + read_length
-    bounds = (forward_start, forward_end)
-    # create a perfect read
-    forward = SeqRecord(
-        Seq(str(sequence[forward_start:forward_end])),
-        id='%s_%s_%s/1' % (header, i, cpu_number),
-        description=''
-    )
-    # add the indels, the qual scores and modify the record accordingly
-    forward.seq = ErrorModel.introduce_indels(
-        forward, 'forward', sequence, bounds)
-    forward = ErrorModel.introduce_error_scores(forward, 'forward')
-    forward.seq = ErrorModel.mut_sequence(forward, 'forward')
+    if FORWARD_SPLIT:
 
-    # generate the reverse read
-    try:
-        reverse_start = forward_end + insert_size
-        reverse_end = reverse_start + read_length
-        assert reverse_end < len(record.seq)
-    except AssertionError as e:
-        # we use random insert when the modelled template length distribution
-        # is too large
-        reverse_end = random.randrange(read_length, len(record.seq))
-        reverse_start = reverse_end - read_length
-    bounds = (reverse_start, reverse_end)
-    # create a perfect read
-    reverse = SeqRecord(
-        Seq(rev_comp(str(sequence[reverse_start:reverse_end]))),
-        id='%s_%s_%s/2' % (header, i, cpu_number),
-        description=''
-    )
-    # add the indels, the qual scores and modify the record accordingly
-    reverse.seq = ErrorModel.introduce_indels(
-        reverse, 'reverse', sequence, bounds)
-    reverse = ErrorModel.introduce_error_scores(reverse, 'reverse')
-    reverse.seq = ErrorModel.mut_sequence(reverse, 'reverse')
+        # generate the forward read
+        try:  # a ref sequence has to be longer than 2 * read_length + i_size
+            assert read_length < len(record.seq)
+            forward_start = random.randrange(
+                0, len(record.seq) - (2 * read_length + insert_size))
+
+            split_forward_start = random.randrange(0, len(record.seq))
+        except AssertionError as e:
+            raise
+        except ValueError as e:
+            logger.debug(
+                '%s shorter than template length for this ErrorModel:%s'
+                % (record.id, e))
+            forward_start = max(0, random.randrange(
+                0, len(record.seq) - read_length))
+
+            split_forward_start = max(0, random.randrange(
+                0, len(record.seq) - read_length))
+            # raise
+
+        forward_end = forward_start + read_length
+
+        split_index = random.randrange(30, read_length - 30)
+        forward_start += split_index
+        split_forward_end = split_forward_start + split_index
+
+        bounds = (forward_start - split_index, forward_end)
+        bounds_split = (split_forward_start, split_forward_end)
+
+        # create a perfect read
+        split_seq = str(sequence[split_forward_start:split_forward_end])
+        forward_seq = str(sequence[forward_start:forward_end])
+
+        # generate the reverse read
+        try:
+            reverse_start = forward_end + insert_size
+            reverse_end = reverse_start + read_length
+            assert reverse_end < len(record.seq)
+        except AssertionError as e:
+            # we use random insert when the modelled template length distribution
+            # is too large
+            reverse_end = random.randrange(read_length, len(record.seq))
+            reverse_start = reverse_end - read_length
+
+        split_reverse_start = 'N'
+        split_reverse_end = 'N'
+        # read name has the format split-interval.forward-interval|reverse-interval
+        qname = f"{header}_{i}_{cpu_number}:{split_forward_start}-{split_forward_end}.{forward_start}-{forward_end}|{split_reverse_start}-{split_reverse_end}.{reverse_start}-{reverse_end}"
+        forward = SeqRecord(
+            Seq(split_seq + forward_seq),
+            id=qname,
+            description=''
+        )
+        # add the indels, the qual scores and modify the record accordingly
+        forward.seq = ErrorModel.introduce_indels(
+            forward, 'forward', sequence, bounds)
+        forward = ErrorModel.introduce_error_scores(forward, 'forward')
+        forward.seq = ErrorModel.mut_sequence(forward, 'forward')
+
+        bounds_r = (reverse_start, reverse_end)
+        # create a perfect read
+        reverse = SeqRecord(
+            Seq(rev_comp(str(sequence[reverse_start:reverse_end]))),
+            id=qname,
+            description=''
+        )
+
+        # add the indels, the qual scores and modify the record accordingly
+        reverse.seq = ErrorModel.introduce_indels(
+            reverse, 'reverse', sequence, bounds_r)
+        reverse = ErrorModel.introduce_error_scores(reverse, 'reverse')
+        reverse.seq = ErrorModel.mut_sequence(reverse, 'reverse')
+
+        FORWARD_SPLIT = False
+
+    else:
+
+        # generate the forward read
+        try:  # a ref sequence has to be longer than 2 * read_length + i_size
+            assert read_length < len(record.seq)
+            forward_start = random.randrange(
+                0, len(record.seq) - (2 * read_length + insert_size))
+
+        except AssertionError as e:
+            raise
+        except ValueError as e:
+            logger.debug(
+                '%s shorter than template length for this ErrorModel:%s'
+                % (record.id, e))
+            forward_start = max(0, random.randrange(
+                0, len(record.seq) - read_length))
+
+        forward_end = forward_start + read_length
+        bounds = (forward_start, forward_end)
+
+        # create a perfect read
+
+        forward_seq = str(sequence[forward_start:forward_end])
+        split_index = random.randrange(30, read_length - 30)
+
+        # generate the reverse read
+        try:
+            reverse_start = forward_end + insert_size
+            reverse_end = reverse_start + read_length
+            reverse_start += split_index
+            assert reverse_end < len(record.seq)
+
+            split_reverse_start = random.randrange(0, len(record.seq))
+            split_reverse_end = split_reverse_start + split_index
+        except AssertionError as e:
+            # we use random insert when the modelled template length distribution
+            # is too large
+            reverse_end = random.randrange(read_length, len(record.seq))
+            reverse_start = reverse_end - read_length
+
+            split_reverse_end = random.randrange(read_length, len(record.seq))
+            split_reverse_start = split_reverse_end - split_index
+
+        split_forward_start = 'N'
+        split_forward_end = 'N'
+        # read name has the format split-interval.forward-interval|reverse-interval
+        qname = f"{header}_{i}_{cpu_number}:{split_forward_start}-{split_forward_end}.{forward_start}-{forward_end}|{split_reverse_start}-{split_reverse_end}.{reverse_start}-{reverse_end}"
+
+        forward = SeqRecord(
+            Seq(forward_seq),
+            id=qname,
+            description=''
+        )
+        # add the indels, the qual scores and modify the record accordingly
+        forward.seq = ErrorModel.introduce_indels(
+            forward, 'forward', sequence, bounds)
+        forward = ErrorModel.introduce_error_scores(forward, 'forward')
+        forward.seq = ErrorModel.mut_sequence(forward, 'forward')
+
+        # generate split seq
+        split_seq = str(sequence[split_reverse_start:split_reverse_end])
+
+        bounds_r = (reverse_start - split_index, reverse_end)
+
+        reverse = SeqRecord(
+            Seq(rev_comp(split_seq) + rev_comp(str(sequence[reverse_start:reverse_end]))),
+            id=qname,
+            description=''
+        )
+
+        # add the indels, the qual scores and modify the record accordingly
+        reverse.seq = ErrorModel.introduce_indels(
+            reverse, 'reverse', sequence, bounds_r)
+        reverse = ErrorModel.introduce_error_scores(reverse, 'reverse')
+        reverse.seq = ErrorModel.mut_sequence(reverse, 'reverse')
+
+        FORWARD_SPLIT = True
 
     return (forward, reverse)
 
